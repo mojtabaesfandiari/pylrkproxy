@@ -35,9 +35,9 @@ def get_lrkproxy_module_ko_file_path() -> str:
 def auto_create_pylrkproxy_file() -> None:
     file = os.path.join(Config.pylrkproxy_ini_directory, Config.pylrkproxy_ini_file_name)
     if not os.path.exists(file):
-        content = '[kernel]\nstart_port : 20000\nend_port : 30000\ncurrent_port : 20000\n' \
-                  'internal_ip : 192.168.10.226\n\n;It is under development\nexternal_ip : 192.168.10.226\n\n' \
-                  '[UDP socket]\nsocket_udp_host = 127.0.0.1\nsocket_udp_port = 8080\n\n' \
+        content = '[kernel]\nstart_port : 20000\nend_port : 40000\ncurrent_port : 20000\n' \
+                  'internal_ip : 192.168.10.10\n\n;It is under development\nexternal_ip : 192.168.10.10\n\n' \
+                  '[UDP socket]\nsocket_udp_host = 0.0.0.0\nsocket_udp_port = 22333\n\n' \
                   '[Cache]\nsave_call_cache = False\n\n' \
                   '[UNIX socket]\nforward_to = /root/sock\n\n' \
                   '[logger]\nlog_to_file = True\nlog_to_console = False\n\n'
