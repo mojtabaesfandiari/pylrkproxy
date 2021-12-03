@@ -1,5 +1,6 @@
 // kernel Module for LRK_Proxy (Light RTP Kernel Proxy)
 // Date: 03-01-2021
+// Last Update: 12-10-2021
 // By: Mojtaba Esfandiari , Maryam Baghdadi
 // Company Name: Nasim Telecom
 #include <linux/version.h>
@@ -25,6 +26,7 @@
 #include <linux/moduleparam.h>
 #include <linux/init.h>
 #include <linux/stat.h>
+#define NF_ACCEPT 1
 
 //Default port range which dedicated by user programm and take as input arguments by kernel module
 static long int min_port = 20000;
@@ -44,7 +46,7 @@ static struct nf_hook_ops netfilter_ops_post;
 static struct nf_hook_ops netfilter_ops_pre;
 
 
-DEFINE_HASHTABLE(netlink_message_table, 10);
+DECLARE_HASHTABLE(netlink_hash_table, 20);
 
 // structure for Insert Msg content in hash table
 struct netlink_message {
@@ -135,14 +137,19 @@ unsigned int main_hook_pre(void *hooknum, struct sk_buff *skb, const struct nf_h
         	udph = (struct udphdr *) ((char *) iph + iph->ihl * 4);
         	if (!udph) return NF_ACCEPT;
 
+		// generate key according to three parameters :(destination_port, source_port, ip_source) 
+		__be32 key;
+  		key = udph->dest + udph->source + iph->saddr;
 		// lookup in hash table according to destination port as key value
-    		hash_for_each_possible(netlink_message_table,netlink_message , hash_node, udph->dest) {
-
+    		
+		struct hlist_node *temp_node; /* Temporary storage */
+		hash_for_each_possible_safe(netlink_hash_table,netlink_message , temp_node,hash_node, key) {
+	
+			printk(KERN_INFO " key1 in  pre  :  %x , %x , %x , %x --\n", key, iph->saddr , udph->source, udph->dest); 	
 			// modify destination IP address before forwarding
 			iph->daddr=netlink_message->src_ipv4;
-
+			
 			update_udp_ip_checksum(skb, udph, iph);
-
     		}
 
 	}
@@ -167,10 +174,16 @@ unsigned int main_hook_post(void *hooknum, struct sk_buff *skb, const struct nf_
 
         	udph = (struct udphdr *) ((char *) iph + iph->ihl * 4);
         	if (!udph) return NF_ACCEPT;
-
+	
+		// generate key according to three parameters :(destination_port, source_port, ip_source) 
+		__be32 key;
+  		key = udph->dest + udph->source + iph->saddr;
 		// lookup in hash table according to destination port as key value
-    		hash_for_each_possible(netlink_message_table,netlink_message , hash_node, udph->dest) {
-
+    		struct hlist_node *temp_node; /* Temporary storage */
+		hash_for_each_possible_safe(netlink_hash_table,netlink_message , temp_node,hash_node, key) {
+	
+		//hash_for_each_possible(netlink_hash_table,netlink_message , hash_node, key) {
+			
 			// modify source IP address, destination and source  port Numbers before packet forwarding
 
 			// Note: We can't modify source IP address in pre routing function because forwarding
@@ -209,8 +222,8 @@ static void lrkp_nl_recv_msg(struct sk_buff *skb)
   	int cnt=0;
   	struct netlink_message *netlink_message_s1;
   	struct netlink_message *netlink_message_s2;
- 	__be16 key_s1;
-  	__be16 key_s2;
+ 	__be32 key_s1;
+  	__be32 key_s2;
   	char* const delim = " ";
   	char* token;
 	char* cur;
@@ -220,16 +233,19 @@ static void lrkp_nl_recv_msg(struct sk_buff *skb)
 	struct netlink_message *netlink_message_rtcp1;
   	struct netlink_message *netlink_message_rtcp2;
   	struct netlink_message *netlink_message_for_free;
- 	__be16 key_rtcp1;
-  	__be16 key_rtcp2;
+ 	__be32 key_rtcp1;
+  	__be32 key_rtcp2;
    	__be16 rtcp_src_port;
   	__be16 rtcp_dst_port;
   	__be16 rtcp_snat_port;
   	__be16 rtcp_dnat_port;
 
 
-	printk(KERN_INFO "Entering: %s\n", __FUNCTION__);
+    	struct hlist_node *temp_node; /* Temporary storage */
 
+
+	//printk(KERN_INFO "Entering: %s\n", __FUNCTION__);
+	//printk(KERN_INFO "-------------------------------\n");
 
 	nlh=(struct nlmsghdr*)skb->data;
 	cur = (char*)nlmsg_data(nlh);//strtok((char*)nlmsg_data(nlh));
@@ -245,44 +261,62 @@ static void lrkp_nl_recv_msg(struct sk_buff *skb)
 			if(cnt==1)
 				session = token;
 			if(cnt==2)
+			{
 				src_ipv4=ip_asc_to_int(token);
+	
+				key_s2 = htonl(src_ipv4);
+				key_rtcp2 = htonl(src_ipv4);
+			}	
 			if(cnt==3)
+			{
 				dst_ipv4 = ip_asc_to_int(token);
+			}	
 			if(cnt==4)
+			{
 				snat_ipv4 = ip_asc_to_int(token);
+			}	
 			if(cnt==5)
+			{
 				dnat_ipv4 = ip_asc_to_int(token);
+	
+				key_s1 = htonl(dnat_ipv4);
+				key_rtcp1 = htonl(dnat_ipv4);
+			}	
 			if(cnt==6)
 			{
 				kstrtoint(token, 10, &val);
 				src_port = htons(val);
+				key_s2 = key_s2 + htons(val);
 
+				key_rtcp2 = key_rtcp2 + htons(val+1);
 				rtcp_src_port = htons(val+1);
 			}
 			if(cnt==7)
 			{
 				kstrtoint(token, 10, &val);
 				dst_port = htons(val);
-				key_s1 = htons(val);
+				key_s1 = key_s1 + htons(val);
 
 				rtcp_dst_port = htons(val+1);
-				key_rtcp1 = htons(val+1);
+				key_rtcp1 = key_rtcp1 + htons(val+1);
 			}
 			if(cnt==8)
 			{
 				kstrtoint(token, 10, &val);
 				snat_port = htons(val);
-				key_s2 = htons(val);
+				key_s2 = key_s2 + htons(val);
 
 				rtcp_snat_port = htons(val+1);
-				key_rtcp2 = htons(val+1);
+				key_rtcp2 = key_rtcp2 + htons(val+1);
 			}
 			if(cnt==9)
 			{
 				kstrtoint(token, 10, &val);
 				dnat_port = htons(val);
 
+				key_s1 = key_s1 + htons(val);
 				rtcp_dnat_port = htons(val+1);
+				key_rtcp1 = key_rtcp1 + htons(val+1);
 			}
 			if(cnt==10)
 				timeout = token;
@@ -291,15 +325,21 @@ static void lrkp_nl_recv_msg(struct sk_buff *skb)
 
 			cnt++;
  		}
-
+		//printk(KERN_INFO "Netlink received msg successfully\n");
+		printk(KERN_INFO " ports : %x ,  %x  , %x , %x ---\n",  src_port, dst_port , snat_port, dnat_port);
+		printk(KERN_INFO " IPs : %x ,  %x   ---\n",  htonl(src_ipv4), /*htonl(dst_ipv4) , htonl(snat_ipv4),*/ htonl(dnat_ipv4)); 
+	
+		printk(KERN_INFO " keys : %x ,  %x  ---\n",  key_s1, key_s2); 	
 		// delete allocated memory from hash table with key destination port
-    		hash_for_each_possible(netlink_message_table,netlink_message_s1 , hash_node, key_s1) {
+		hash_for_each_possible_safe(netlink_hash_table,netlink_message_s1 , temp_node,hash_node, key_s1) {
+		//hash_for_each_possible(netlink_hash_table,netlink_message_s1 , hash_node, key_s1) {
 			hash_del_rcu(&netlink_message_s1->hash_node);
 			free(netlink_message_s1);
 		}
 
 		// delete allocated memory from hash table with key snat port
-    		hash_for_each_possible(netlink_message_table,netlink_message_s2 , hash_node, key_s2) {
+		hash_for_each_possible_safe(netlink_hash_table,netlink_message_s2 , temp_node,hash_node, key_s2) {
+    		//hash_for_each_possible(netlink_hash_table,netlink_message_s2 , hash_node, key_s2) {
 			hash_del_rcu(&netlink_message_s2->hash_node);
 			free(netlink_message_s2);
 		}
@@ -308,13 +348,13 @@ static void lrkp_nl_recv_msg(struct sk_buff *skb)
 		netlink_message_s1 = (struct netlink_message*) kmalloc(sizeof(struct netlink_message)*150, GFP_KERNEL);
     		if (netlink_message_s1 == NULL) {
       			printk(KERN_ALERT "[CODA] Cannot alloc netlink_message_s1");
-      			return NF_ACCEPT;
+      			return;
     		}
 
     		netlink_message_s2 = (struct netlink_message*) kmalloc(sizeof(struct netlink_message)*150, GFP_KERNEL);
 		if (netlink_message_s2 == NULL) {
       			printk(KERN_ALERT "[CODA] Cannot alloc netlink_message_s2");
-      			return NF_ACCEPT;
+      			return;
     		}
 
 
@@ -331,7 +371,7 @@ static void lrkp_nl_recv_msg(struct sk_buff *skb)
     		netlink_message_s1->callid = callid;
     		netlink_message_s1->session = session[0];
    		// Insert To hash_table with key src_port
-		hash_add_rcu(netlink_message_table, &netlink_message_s1->hash_node, key_s1);
+		hash_add_rcu(netlink_hash_table, &netlink_message_s1->hash_node, key_s1);
 
   		// define hash & Insert in receiver side
 		netlink_message_s2->src_ipv4 = htonl(dnat_ipv4);
@@ -347,19 +387,21 @@ static void lrkp_nl_recv_msg(struct sk_buff *skb)
     		netlink_message_s2->session = session[0];
 
 		// Insert To hash_table with key src_port
-		hash_add_rcu(netlink_message_table, &netlink_message_s2->hash_node, key_s2);
+		hash_add_rcu(netlink_hash_table, &netlink_message_s2->hash_node, key_s2);
 
 
 		// RTCP procedure for allocation & insert in hash table
 
 		// delete allocated memory from hash table for rtcp messages with key destination port
-    		hash_for_each_possible(netlink_message_table,netlink_message_rtcp1 , hash_node, key_rtcp1) {
+    		//hash_for_each_possible(netlink_message_table,netlink_message_rtcp1 , hash_node, key_rtcp1) {
+		hash_for_each_possible_safe(netlink_hash_table,netlink_message_rtcp1 , temp_node, hash_node, key_rtcp1) {
 			hash_del_rcu(&netlink_message_rtcp1->hash_node);
 			free(netlink_message_rtcp1);
 		}
 
 		// delete allocated memory from hash table for rtcp messages with key snat port
-    		hash_for_each_possible(netlink_message_table,netlink_message_rtcp2 , hash_node, key_rtcp2) {
+		hash_for_each_possible_safe(netlink_hash_table,netlink_message_rtcp2 , temp_node, hash_node, key_rtcp2) {
+    		//hash_for_each_possible(netlink_message_table,netlink_message_rtcp2 , hash_node, key_rtcp2) {
 			hash_del_rcu(&netlink_message_rtcp2->hash_node);
 			free(netlink_message_rtcp2);
 		}
@@ -368,13 +410,13 @@ static void lrkp_nl_recv_msg(struct sk_buff *skb)
 		netlink_message_rtcp1 = (struct netlink_message*) kmalloc(sizeof(struct netlink_message)*150, GFP_KERNEL);
     		if (netlink_message_rtcp1 == NULL) {
       			printk(KERN_ALERT "[CODA] Cannot alloc netlink_message_rtcp1");
-      			return NF_ACCEPT;
+      			return ;
     		}
 
     		netlink_message_rtcp2 = (struct netlink_message*) kmalloc(sizeof(struct netlink_message)*150, GFP_KERNEL);
 		if (netlink_message_rtcp2 == NULL) {
       			printk(KERN_ALERT "[CODA] Cannot alloc netlink_message_rtcp2");
-      			return NF_ACCEPT;
+      			return;
     		}
 
 
@@ -391,7 +433,7 @@ static void lrkp_nl_recv_msg(struct sk_buff *skb)
     		netlink_message_rtcp1->callid = callid;
     		netlink_message_rtcp1->session = session[0];
    		// Insert To hash_table with key src_port
-		hash_add_rcu(netlink_message_table, &netlink_message_rtcp1->hash_node, key_rtcp1);
+		hash_add_rcu(netlink_hash_table, &netlink_message_rtcp1->hash_node, key_rtcp1);
 
   		// define hash & Insert in receiver side for RTCP
 		netlink_message_rtcp2->src_ipv4 = htonl(dnat_ipv4);
@@ -406,10 +448,10 @@ static void lrkp_nl_recv_msg(struct sk_buff *skb)
     		netlink_message_rtcp2->callid = callid;
     		netlink_message_rtcp2->session = session[0];
    		// Insert To hash_table with key src_port
-		hash_add_rcu(netlink_message_table, &netlink_message_rtcp2->hash_node, key_rtcp2);
+		hash_add_rcu(netlink_hash_table, &netlink_message_rtcp2->hash_node, key_rtcp2);
 
 	}
-
+	return ;
 }
 
 // init function of module
@@ -422,7 +464,7 @@ static int __init lrkp_init(void) {
     		.input = lrkp_nl_recv_msg,
 	};
 
-	printk(KERN_INFO "load LRKProxy Module--------------------------------\n");
+	printk(KERN_INFO "Load LRKProxy Module--------------------------------\n");
 	nl_sk = netlink_kernel_create(&init_net, NETLINK_USER, &cfg);
 	if(!nl_sk)
 	{
@@ -450,6 +492,10 @@ static int __init lrkp_init(void) {
 	#else
 		nf_register_hook(&netfilter_ops_pre);
 	#endif
+
+	// initiate and allocation for dynamic hash table
+	hash_init(netlink_hash_table);	
+	
 	return 0;
 }
 // exit function of module
@@ -460,7 +506,7 @@ static void __exit lrkp_exit(void)
 	int bkt;
 
 	//free hash_table
-  	hash_for_each_safe(netlink_message_table, bkt, temp_node, netlink_message, hash_node) {
+  	hash_for_each_safe(netlink_hash_table, bkt, temp_node, netlink_message, hash_node) {
     		hash_del_rcu(&netlink_message->hash_node);
     		free(netlink_message);
     		netlink_message = NULL;
@@ -477,7 +523,7 @@ static void __exit lrkp_exit(void)
 		nf_unregister_hook(&netfilter_ops_post);
 		nf_unregister_hook(&netfilter_ops_pre);
 	#endif
-	printk(KERN_INFO "unload LRKProxy module-------------------------------\n");
+	printk(KERN_INFO "Unload LRKProxy Module-------------------------------\n");
 }
 
 module_init(lrkp_init);
