@@ -83,16 +83,16 @@ Default config:
 ```
 [kernel]
 start_port = 20000
-end_port = 40000
+end_port = 30000
 current_port = 20000
-internal_ip = 192.168.10.10
+internal_ip = 192.168.10.226
 
 ;It is under development
-external_ip = "192.168.10.10"
+external_ip = "192.168.10.226"
 
 [UDP socket]
-socket_udp_host = 0.0.0.0
-socket_udp_port = 22333
+socket_udp_host = 127.0.0.1
+socket_udp_port = 8080
 
 [Cache]
 save_call_cache = False

@@ -54,7 +54,13 @@ class UDPSocketService:
                             SessionControllerService.add_request_data_queue.put(data)
                             cls.send_successfully_get_data(data)
                         elif command == "D":
-                            pass
+                            """
+                            request_id D
+                            src_ip dst_ip s_nat_ip d_nat_ip src_port dst_port s_nat_port d_nat_port timeout call_id
+                            """
+                            logger.debug(f"Received Command D: {request_id} => {data}")
+                            SessionControllerService.add_request_data_queue.put(data)
+                            cls.send_successfully_get_data(data)
                         else:
                             logger.error(f"This command not found in data: {data}")
                     else:
